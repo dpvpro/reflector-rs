@@ -1,4 +1,4 @@
-use arch_reflector::{run, Cli};
+use arch_reflector::{Cli, run};
 use clap::Parser;
 use color_eyre::eyre::Result;
 

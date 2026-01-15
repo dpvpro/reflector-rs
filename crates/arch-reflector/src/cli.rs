@@ -1,4 +1,4 @@
-use clap::{value_parser, ArgAction, Args, Parser, ValueEnum};
+use clap::{ArgAction, Args, Parser, ValueEnum, value_parser};
 use clap_verbosity_flag::Verbosity;
 
 pub const URL: &str = "https://archlinux.org/mirrors/status/json/";

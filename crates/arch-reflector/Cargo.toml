@@ -2,7 +2,8 @@
 name = "arch-reflector"
 version = "0.1.5"
 description = "A Rust implementation of the arch linux reflector package"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 authors = ["IgnisDa <ignisda2001@gmail.com>", "James Liu <contact@no-bull.sh>"]
 repository = "https://github.com/james7132/reflector-rs"
 license = "MIT"

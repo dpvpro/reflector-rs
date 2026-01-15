@@ -2,7 +2,7 @@ mod cli;
 mod mirrors;
 
 pub use cli::Cli;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, CellAlignment, Table};
+use comfy_table::{Cell, CellAlignment, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use mirrors::{count_countries, get_cache_file, get_mirror_status};
 
 pub async fn run(options: &Cli) {

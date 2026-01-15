@@ -1,17 +1,14 @@
 //! This is where the [`Protocol`](Protocol) structs and its dependencies go.
-use quick_error::quick_error;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use thiserror::Error;
 
-quick_error! {
-    /// The possible errors that could happen when working with [`Protocol`](Protocol).
-    #[derive(Debug)]
-    pub enum Error {
-        /// An invalid string was passed to [`Protocol::from_str()`].
-        InvalidProtocol(protocol: String) {
-            display("can't parse '{}' to a valid protocol", protocol)
-        }
-    }
+/// The possible errors that could happen when working with [`Protocol`](Protocol).
+#[derive(Debug, Error)]
+pub enum Error {
+    /// An invalid string was passed to [`Protocol::from_str()`].
+    #[error("can't parse '{0}' to a valid protocol")]
+    InvalidProtocol(String),
 }
 
 /// This contains every supported protocol by Arch Linux mirror status as of the time of writing

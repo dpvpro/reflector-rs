@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["IgnisDa <ignisda2001@gmail.com>", "James Liu <contact@no-bull.sh>"]
 repository = "https://github.com/james7132/reflector-rs"
-license = "MIT"
+license = "GPL-2.0-or-later"
 readme = "README.md"
 
 [dependencies]

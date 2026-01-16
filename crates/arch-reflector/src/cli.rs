@@ -1,3 +1,4 @@
+use arch_mirrors_rs::Protocol;
 use clap::{ArgAction, Args, Parser, ValueEnum, value_parser};
 use clap_verbosity_flag::Verbosity;
 
@@ -152,7 +153,7 @@ pub struct Filters {
     /// Match one of the given protocols, e.g. "https" or "ftp". Multiple protocols may be
     /// selected using commas (e.g. "https,http") or by passing this option multiple times.
     #[arg(long, short, value_delimiter=',', value_name = "protocol", action = ArgAction::Append)]
-    pub protocol: Vec<String>,
+    pub protocol: Vec<Protocol>,
 
     /// Set the minimum completion percent for the returned mirrors. Check the mirror
     /// status webpage for the meaning of this parameter.

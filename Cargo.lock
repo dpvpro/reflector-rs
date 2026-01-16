@@ -85,6 +85,7 @@ version = "0.1.5"
 dependencies = [
  "anyhow",
  "arch-mirrors-rs",
+ "chrono",
  "clap",
  "clap-verbosity-flag",
  "comfy-table",

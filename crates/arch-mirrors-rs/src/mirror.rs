@@ -16,6 +16,9 @@ pub struct Mirror {
     /// Completion PCT. Unknown what this means.
     pub completion_pct: Option<f64>,
 
+    /// The average delay in seconds.
+    pub delay: u32,
+
     /// The average duration. Unknown what this means.
     pub duration_average: Option<f64>,
 

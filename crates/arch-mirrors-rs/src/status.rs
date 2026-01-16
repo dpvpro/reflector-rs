@@ -26,16 +26,4 @@ pub struct Status {
 impl Status {
     /// The URL where the JSON is found from.
     pub const DEFAULT_URL: &'static str = "https://archlinux.org/mirrors/status/json";
-
-    /// Get the status from [`Status::URL`](Self::URL).
-    pub async fn get_from_default_url() -> reqwest::Result<Self> {
-        Self::get_from_url(Self::DEFAULT_URL).await
-    }
-
-    /// Get the status from a given url.
-    pub async fn get_from_url(url: &str) -> reqwest::Result<Self> {
-        let response = reqwest::get(url).await?;
-        let value = response.json().await;
-        Ok(value?)
-    }
 }

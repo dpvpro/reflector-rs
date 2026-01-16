@@ -1,18 +1,20 @@
 use anyhow::Result;
 use arch_mirrors_rs::{Mirror, Status};
-use directories::BaseDirs;
 use std::collections::HashMap;
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     time::SystemTime,
 };
+use xdg::BaseDirectories;
 
 pub fn get_cache_file(name: Option<&str>) -> PathBuf {
     let name = name.unwrap_or("mirrorstatus.json");
-    let base_dirs = BaseDirs::new().expect("is not expected to fail");
-    let cache_dir = base_dirs.cache_dir();
-    fs::create_dir_all(cache_dir).expect("creating directory should not fail");
+    let base_dirs = BaseDirectories::new();
+    let cache_dir = base_dirs
+        .get_cache_home()
+        .unwrap_or_else(|| PathBuf::from("~/.cache"));
+    fs::create_dir_all(&cache_dir).expect("creating directory should not fail");
     cache_dir.join(name)
 }
 
@@ -40,7 +42,7 @@ pub async fn get_mirror_status(
     let loaded = if !is_invalid {
         serde_json::from_reader(File::open(cache_file_path)?)?
     } else {
-        let loaded = Status::get_from_url(url).await?;
+        let loaded = reqwest::get(url).await?.json().await?;
         let to_write = serde_json::to_string_pretty(&loaded)?;
         fs::write(cache_file_path, to_write)?;
         loaded

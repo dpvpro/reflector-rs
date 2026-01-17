@@ -266,7 +266,6 @@ fn count_countries<'a>(
 }
 
 struct Metadata<'a> {
-    command: String,
     when: DateTime<Utc>,
     origin: &'a str,
     retrieved: DateTime<Utc>,
@@ -293,7 +292,6 @@ async fn run(options: &Cli) {
     sort_status(&options.run, &mut status).await;
 
     let metadata = Metadata {
-        command: "reflector".to_string(),
         when,
         origin: options.url.as_ref(),
         retrieved: when,
@@ -316,6 +314,7 @@ fn format_output<'a>(
     mirrors: impl Iterator<Item = &'a Mirror>,
     mut out: impl Write,
 ) -> io::Result<()> {
+    let command = std::env::args().collect::<Vec<_>>().join(" ");
     writeln!(
         out,
         "################################################################################\n\
@@ -325,7 +324,7 @@ fn format_output<'a>(
     writeln!(
         out,
         "# With:       {}\n# When:       {}\n# From:       {}\n# Retrieved:  {}\n# Last Check: {}\n",
-        metadata.command, metadata.when, metadata.origin, metadata.retrieved, metadata.last_check
+        command, metadata.when, metadata.origin, metadata.retrieved, metadata.last_check
     )?;
     for mirror in mirrors {
         writeln!(out, "Server = {}$repo/os/$arch", mirror.url)?;

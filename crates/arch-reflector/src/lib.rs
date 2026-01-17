@@ -1,13 +1,20 @@
 mod cli;
 mod mirrors;
 
-use arch_mirrors_rs::{Mirror, Status};
+use arch_mirrors_rs::{Mirror, Protocol, Status};
 use chrono::{DateTime, TimeDelta, Utc};
-pub use cli::{Cli, Filters};
+pub use cli::{Cli, Filters, RunOptions, SortTypes};
 use comfy_table::{Cell, CellAlignment, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use mirrors::{count_countries, get_cache_file, get_mirror_status};
+use reqwest::Url;
+use std::cmp::{Ordering, Reverse};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
+use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::task::JoinSet;
 
 struct Metadata<'a> {
     command: String,
@@ -20,7 +27,7 @@ struct Metadata<'a> {
 pub async fn run(options: &Cli) {
     let cache_file = get_cache_file(None);
     let when = Utc::now();
-    let status = match get_mirror_status(10, 10, &options.url, &cache_file).await {
+    let mut status = match get_mirror_status(10, 10, &options.url, &cache_file).await {
         Ok(status) => status,
         Err(err) => {
             eprintln!("error: {err}");
@@ -33,7 +40,8 @@ pub async fn run(options: &Cli) {
         return;
     }
 
-    let mirrors = filter_status(&options.run.filters, &status);
+    filter_status(&options.run.filters, &mut status);
+    sort_status(&options.run, &mut status).await;
 
     let metadata = Metadata {
         command: "reflector".to_string(),
@@ -44,9 +52,9 @@ pub async fn run(options: &Cli) {
     };
 
     let result = if let Some(path) = &options.run.save {
-        File::create(path).and_then(move |file| format_output(&metadata, mirrors, file))
+        File::create(path).and_then(move |file| format_output(&metadata, status.urls.iter(), file))
     } else {
-        format_output(&metadata, mirrors, io::stdout())
+        format_output(&metadata, status.urls.iter(), io::stdout())
     };
 
     if let Err(err) = result {
@@ -76,15 +84,135 @@ fn format_output<'a>(
     Ok(())
 }
 
+async fn sort_status(run_options: &RunOptions, status: &mut Status) {
+    match run_options.sort {
+        Some(SortTypes::Age) => status.urls.sort_by_key(|mir| mir.last_sync),
+        Some(SortTypes::Rate) => {
+            let rates = rate_status(run_options, status).await;
+            status
+                .urls
+                .sort_by(|a, b| match (rates.get(&a.url), rates.get(&b.url)) {
+                    (Some(rate_a), Some(rate_b)) => rate_a
+                        .partial_cmp(rate_b)
+                        .unwrap_or(Ordering::Equal)
+                        .reverse(),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                });
+        }
+        Some(SortTypes::Country) => status.urls.sort_by(|a, b| a.country.cmp(&b.country)),
+        Some(SortTypes::Score) => status.urls.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(Ordering::Equal)
+                .reverse()
+        }),
+        Some(SortTypes::Delay) => status.urls.sort_by_key(|mir| Reverse(mir.delay)),
+        None => {}
+    }
+}
+
+async fn rate_status(run_options: &RunOptions, status: &Status) -> HashMap<Url, f64> {
+    const DB_FILENAME: &str = "extra.db";
+    const DB_SUBPATH: &str = "extra/os/x86_64/extra.db";
+
+    let mut task_set = JoinSet::new();
+    let mut rates = HashMap::with_capacity(status.urls.len());
+    let connection_timeout = run_options.connection_timeout;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(run_options.download_timeout))
+        .build()
+        .unwrap();
+
+    for mirror in &status.urls {
+        let url = mirror.url.clone();
+        match mirror.protocol {
+            Protocol::Http | Protocol::Https => {
+                let task_client = client.clone();
+                task_set.spawn(async move {
+                    let db_url = url.join(DB_SUBPATH).unwrap();
+                    let start = Utc::now();
+                    let response = task_client.get(db_url).send().await;
+
+                    let body = match response {
+                        Ok(body) => body.bytes().await,
+                        Err(_) => return (url, f64::NEG_INFINITY),
+                    };
+
+                    let content_length = match body {
+                        Ok(bytes) => bytes.len(),
+                        Err(_) => return (url, f64::NEG_INFINITY),
+                    };
+
+                    let micros = (Utc::now() - start).as_seconds_f64();
+                    let rate = (content_length as f64) / micros;
+                    (url, rate)
+                });
+            }
+            Protocol::Rsync => {
+                task_set.spawn(async move {
+                    let Ok(temp_dir) = tempdir::TempDir::new("reflector") else {
+                        return (url, f64::NEG_INFINITY);
+                    };
+
+                    let db_url = url.join(DB_SUBPATH).unwrap();
+
+                    let start = Utc::now();
+                    let command = tokio::process::Command::new("rsync")
+                        .arg("-avL")
+                        .arg("--no-h")
+                        .arg("--no-motd")
+                        .arg(format!("--contimeout={connection_timeout}"))
+                        .arg(db_url.as_str())
+                        .arg(temp_dir.path())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn();
+
+                    let result = match command {
+                        Ok(mut child) => child.wait().await,
+                        Err(_) => return (url, f64::NEG_INFINITY),
+                    };
+
+                    match result {
+                        Ok(exit_status) if exit_status.success() => {}
+                        _ => return (url, f64::NEG_INFINITY),
+                    };
+
+                    let micros = (Utc::now() - start).as_seconds_f64();
+                    let file_path = Path::join(temp_dir.path(), DB_FILENAME);
+
+                    let content_length = match std::fs::metadata(file_path) {
+                        Ok(metadata) => metadata.len(),
+                        Err(_) => return (url, f64::NEG_INFINITY),
+                    };
+
+                    let rate = (content_length as f64) / micros;
+                    (url, rate)
+                });
+            }
+        }
+    }
+
+    while let Some(result) = task_set.join_next().await {
+        match result {
+            Ok((url, rate)) => {
+                rates.insert(url, rate);
+            }
+            Err(err) => eprintln!("error: {err}"),
+        }
+    }
+
+    rates
+}
+
 #[allow(clippy::cast_sign_loss)]
 #[allow(clippy::cast_possible_truncation)]
-pub(crate) fn filter_status<'a>(
-    filters: &'a Filters,
-    status: &'a Status,
-) -> impl Iterator<Item = &'a Mirror> {
+pub(crate) fn filter_status(filters: &Filters, status: &mut Status) {
     let now = Utc::now();
     let min_completion_pct = f64::from(filters.completion_percent) / 100.0;
-    status.urls.iter().filter(move |mirror| {
+    status.urls.retain(move |mirror| {
         if let Some(last_sync) = mirror.last_sync {
             // Filter by age. The age is given in hours and converted to seconds. Servers
             // with a last refresh older than the age are omitted.
@@ -148,7 +276,7 @@ pub(crate) fn filter_status<'a>(
         }
 
         true
-    })
+    });
 }
 
 pub fn list_countries(status: &Status) {

@@ -9,14 +9,14 @@ use clap_verbosity_flag::Verbosity;
 
 pub const URL: &str = "https://archlinux.org/mirrors/status/json/";
 pub const DEFAULT_CONNECTION_TIMEOUT: u16 = 5;
-pub const DEFAULT_DOWNLOAD_TIMEOUT: u16 = 5;
+pub const DEFAULT_DOWNLOAD_TIMEOUT: u64 = 5;
 pub const DEFAULT_CACHE_TIMEOUT: u16 = 300;
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
 pub enum SortTypes {
     /// last server synchronization
     Age,
-    /// download rate
+    /// download rate Rate,
     Rate,
     /// country name, either alphabetically or in the order given by the --country option
     Country,
@@ -62,7 +62,7 @@ pub struct RunOptions {
 
     /// The number of seconds to wait before a download times out.
     #[arg(long, default_value_t = DEFAULT_DOWNLOAD_TIMEOUT, value_name = "n")]
-    pub download_timeout: u16,
+    pub download_timeout: u64,
 
     /// The cache timeout in seconds for the data retrieved from the Arch Linux Mirror
     /// Status API.
@@ -188,12 +188,3 @@ mod test {
         Cli::command().debug_assert()
     }
 }
-
-// #[derive(Parser, Debug)]
-// pub enum CliMain {
-//     // #[command(flatten)]
-//     Run(RunOptions),
-//     /// Display a table of the distribution of servers by country.
-//     #[command(long_flag = "list-countries")]
-//     ListCountries,
-// }

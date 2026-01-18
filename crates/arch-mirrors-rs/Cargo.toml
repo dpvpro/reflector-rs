@@ -12,7 +12,6 @@ keywords = ["arch-linux", "linux", "mirrors", "mirror", "mirrorlist"]
 
 [dependencies]
 jiff = { version = "0.2", features = ["serde"] }
-thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 url = { version = "2.2", features = ["serde"] }
 

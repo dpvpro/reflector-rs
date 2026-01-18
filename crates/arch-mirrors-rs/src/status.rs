@@ -22,8 +22,3 @@ pub struct Status {
     /// The version of the status.
     pub version: u32,
 }
-
-impl Status {
-    /// The URL where the JSON is found from.
-    pub const DEFAULT_URL: &'static str = "https://archlinux.org/mirrors/status/json";
-}

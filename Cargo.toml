@@ -15,7 +15,7 @@ expect_used = "warn"
 
 [profile.release]
 strip = true
-lto = true
+lto = "fat"
 opt-level = "z"
 codegen-units = 1
 panic = "abort"

@@ -217,30 +217,30 @@ async fn get_mirror_status(
     run_options: &RunOptions,
     url: &str,
     cache_file_path: Option<PathBuf>,
-) -> Result<Status> {
-    if let Some(cache_file_path) = cache_file_path {
-        let mtime = cache_file_path
-            .metadata()
-            .ok()
-            .and_then(|meta| meta.modified().ok());
-        let is_invalid = mtime.is_none_or(|time| {
-            let now = SystemTime::now();
-            match now.duration_since(time) {
-                Ok(elapsed) => elapsed.as_secs() > run_options.cache_timeout,
-                Err(_) => true,
-            }
-        });
-        let loaded = if is_invalid {
-            let loaded = http_client.get(url).send().await?.json().await?;
-            let to_write = serde_json::to_string_pretty(&loaded)?;
-            fs::write(cache_file_path, to_write)?;
-            loaded
-        } else {
-            serde_json::from_reader(File::open(cache_file_path)?)?
-        };
-        Ok(loaded)
+) -> Result<(Status, SystemTime)> {
+    let Some(cache_file_path) = cache_file_path else {
+        let loaded = http_client.get(url).send().await?.json().await?;
+        return Ok((loaded, SystemTime::now()));
+    };
+
+    let mtime = cache_file_path
+        .metadata()
+        .ok()
+        .and_then(|meta| meta.modified().ok());
+    let is_valid = mtime
+        .and_then(|mtime| SystemTime::now().duration_since(mtime).ok())
+        .filter(|elapsed| elapsed.as_secs() <= run_options.cache_timeout)
+        .is_some();
+    if let Some(mtime) = mtime
+        && is_valid
+    {
+        let loaded = serde_json::from_reader(File::open(cache_file_path)?)?;
+        Ok((loaded, mtime))
     } else {
-        Ok(http_client.get(url).send().await?.json().await?)
+        let loaded = http_client.get(url).send().await?.json().await?;
+        let to_write = serde_json::to_string_pretty(&loaded)?;
+        fs::write(cache_file_path, to_write)?;
+        Ok((loaded, SystemTime::now()))
     }
 }
 
@@ -272,8 +272,7 @@ fn count_countries<'a>(
 struct Metadata<'a> {
     when: Timestamp,
     origin: &'a str,
-    retrieved: Timestamp,
-    last_check: Timestamp,
+    retrieved: SystemTime,
 }
 
 async fn run(options: &Cli) -> anyhow::Result<()> {
@@ -283,7 +282,7 @@ async fn run(options: &Cli) -> anyhow::Result<()> {
         .build()?;
     let cache_file = get_cache_file(None).ok();
     let when = Timestamp::now();
-    let mut status =
+    let (mut status, mtime) =
         get_mirror_status(&http_client, &options.run, &options.url, cache_file).await?;
 
     if options.list_countries {
@@ -327,26 +326,21 @@ async fn run(options: &Cli) -> anyhow::Result<()> {
     let metadata = Metadata {
         when,
         origin: options.url.as_ref(),
-        retrieved: when,
-        last_check: when,
+        retrieved: mtime,
     };
 
     if let Some(path) = &options.run.save {
-        File::create(path)
-            .and_then(move |file| format_output(&metadata, status.urls.iter(), file))?;
+        File::create(path).and_then(move |file| format_output(&metadata, &status, file))?;
     } else {
-        format_output(&metadata, status.urls.iter(), io::stdout())?;
+        format_output(&metadata, &status, io::stdout())?;
     }
 
     Ok(())
 }
 
-fn format_output<'a>(
-    metadata: &Metadata,
-    mirrors: impl Iterator<Item = &'a Mirror>,
-    mut out: impl Write,
-) -> io::Result<()> {
+fn format_output<'a>(metadata: &Metadata, status: &Status, mut out: impl Write) -> io::Result<()> {
     let command = std::env::args().collect::<Vec<_>>().join(" ");
+    let retrieved = Timestamp::try_from(metadata.retrieved).unwrap_or(metadata.when);
     writeln!(
         out,
         "################################################################################\n\
@@ -356,9 +350,9 @@ fn format_output<'a>(
     writeln!(
         out,
         "# With:       {}\n# When:       {}\n# From:       {}\n# Retrieved:  {}\n# Last Check: {}\n",
-        command, metadata.when, metadata.origin, metadata.retrieved, metadata.last_check
+        command, metadata.when, metadata.origin, retrieved, status.last_check
     )?;
-    for mirror in mirrors {
+    for mirror in &status.urls {
         writeln!(out, "Server = {}$repo/os/$arch", mirror.url)?;
     }
     Ok(())

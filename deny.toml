@@ -1,0 +1,32 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+  "Apache-2.0 WITH LLVM-exception",
+  "Apache-2.0",
+  "GPL-2.0-or-later",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+]
+
+exceptions = []
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+skip = [
+  { name = "windows-sys", reason = "This binary does not target Windows" }
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

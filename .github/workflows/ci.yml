@@ -44,6 +44,19 @@ jobs:
       - name: Run all tests
         run: cargo test --workspace
 
+  cargo-deny:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - uses: EmbarkStudios/cargo-deny-action@v2
+      with:
+        log-level: warn
+        manifest-path: ./Cargo.toml
+        command: check
+        arguments: --all-features
+        command-arguments: ""
+        credentials: https://${{ secrets.GITHUB_USER }}:${{ secrets.GITHUB_PAT }}@github.com
+
   lints:
     name: Lints
     runs-on: ubuntu-latest

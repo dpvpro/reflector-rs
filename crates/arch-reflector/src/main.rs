@@ -396,7 +396,7 @@ async fn rate_status(
             Protocol::Rsync => {
                 task_set.spawn(async move {
                     let _guard = semaphore.acquire().await?;
-                    let temp_dir = tempdir::TempDir::new("reflector")?;
+                    let temp_dir = tempfile::TempDir::new()?;
                     let db_url = url.join(DB_SUBPATH)?;
 
                     let start = Instant::now();

@@ -270,26 +270,19 @@ struct Metadata<'a> {
     last_check: Timestamp,
 }
 
-async fn run(options: &Cli) {
+async fn run(options: &Cli) -> anyhow::Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(options.run.download_timeout))
         .connect_timeout(Duration::from_secs(options.run.connection_timeout))
-        .build()
-        .unwrap();
+        .build()?;
     let cache_file = get_cache_file(None);
     let when = Timestamp::now();
     let mut status =
-        match get_mirror_status(&http_client, &options.run, &options.url, &cache_file).await {
-            Ok(status) => status,
-            Err(err) => {
-                eprintln!("error: {err}");
-                return;
-            }
-        };
+        get_mirror_status(&http_client, &options.run, &options.url, &cache_file).await?;
 
     if options.list_countries {
         list_countries(&status);
-        return;
+        return Ok(());
     }
 
     filter_status(&options.run.filters, &mut status);
@@ -302,15 +295,14 @@ async fn run(options: &Cli) {
         last_check: when,
     };
 
-    let result = if let Some(path) = &options.run.save {
-        File::create(path).and_then(move |file| format_output(&metadata, status.urls.iter(), file))
+    if let Some(path) = &options.run.save {
+        File::create(path)
+            .and_then(move |file| format_output(&metadata, status.urls.iter(), file))?;
     } else {
-        format_output(&metadata, status.urls.iter(), io::stdout())
-    };
-
-    if let Err(err) = result {
-        eprintln!("error: {err}");
+        format_output(&metadata, status.urls.iter(), io::stdout())?;
     }
+
+    Ok(())
 }
 
 fn format_output<'a>(
@@ -373,7 +365,7 @@ async fn rate_status(
     const DB_FILENAME: &str = "extra.db";
     const DB_SUBPATH: &str = "extra/os/x86_64/extra.db";
 
-    let mut task_set = JoinSet::new();
+    let mut task_set = JoinSet::<anyhow::Result<(Url, f64)>>::new();
     let mut rates = HashMap::with_capacity(status.urls.len());
     let semaphore = Arc::new(Semaphore::new(run_options.threads.max(1)));
     let connection_timeout = run_options.connection_timeout;
@@ -385,41 +377,23 @@ async fn rate_status(
             Protocol::Http | Protocol::Https => {
                 let task_client = http_client.clone();
                 task_set.spawn(async move {
-                    let Ok(_guard) = semaphore.acquire().await else {
-                        return (url, f64::NEG_INFINITY);
-                    };
-                    let db_url = url.join(DB_SUBPATH).unwrap();
+                    let _guard = semaphore.acquire().await?;
+                    let db_url = url.join(DB_SUBPATH)?;
                     let start = Instant::now();
-                    let response = task_client.get(db_url).send().await;
-
-                    let body = match response {
-                        Ok(body) => body.bytes().await,
-                        Err(_) => return (url, f64::NEG_INFINITY),
-                    };
-
-                    let content_length = match body {
-                        Ok(bytes) => bytes.len(),
-                        Err(_) => return (url, f64::NEG_INFINITY),
-                    };
-
+                    let content_length = task_client.get(db_url).send().await?.bytes().await?.len();
                     let micros = (Instant::now() - start).as_secs_f64();
                     let rate = (content_length as f64) / micros;
-                    (url, rate)
+                    Ok((url, rate))
                 });
             }
             Protocol::Rsync => {
                 task_set.spawn(async move {
-                    let Ok(_guard) = semaphore.acquire().await else {
-                        return (url, f64::NEG_INFINITY);
-                    };
-                    let Ok(temp_dir) = tempdir::TempDir::new("reflector") else {
-                        return (url, f64::NEG_INFINITY);
-                    };
-
-                    let db_url = url.join(DB_SUBPATH).unwrap();
+                    let _guard = semaphore.acquire().await?;
+                    let temp_dir = tempdir::TempDir::new("reflector")?;
+                    let db_url = url.join(DB_SUBPATH)?;
 
                     let start = Instant::now();
-                    let command = tokio::process::Command::new("rsync")
+                    let exit_status = tokio::process::Command::new("rsync")
                         .arg("-avL")
                         .arg("--no-h")
                         .arg("--no-motd")
@@ -428,28 +402,20 @@ async fn rate_status(
                         .arg(temp_dir.path())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
-                        .spawn();
+                        .spawn()?
+                        .wait()
+                        .await?;
 
-                    let result = match command {
-                        Ok(mut child) => child.wait().await,
-                        Err(_) => return (url, f64::NEG_INFINITY),
-                    };
-
-                    match result {
-                        Ok(exit_status) if exit_status.success() => {}
-                        _ => return (url, f64::NEG_INFINITY),
-                    };
+                    if !exit_status.success() {
+                        return Err(anyhow::anyhow!(exit_status));
+                    }
 
                     let micros = (Instant::now() - start).as_secs_f64();
                     let file_path = Path::join(temp_dir.path(), DB_FILENAME);
-
-                    let content_length = match std::fs::metadata(file_path) {
-                        Ok(metadata) => metadata.len(),
-                        Err(_) => return (url, f64::NEG_INFINITY),
-                    };
+                    let content_length = std::fs::metadata(file_path)?.len();
 
                     let rate = (content_length as f64) / micros;
-                    (url, rate)
+                    Ok((url, rate))
                 });
             }
         }
@@ -457,10 +423,11 @@ async fn rate_status(
 
     while let Some(result) = task_set.join_next().await {
         match result {
-            Ok((url, rate)) => {
+            Ok(Ok((url, rate))) => {
                 rates.insert(url, rate);
             }
-            Err(err) => eprintln!("error: {err}"),
+            Ok(Err(err)) => eprintln!("error while rating mirror: {err}"),
+            Err(err) => eprintln!("error while rating mirror: {err}"),
         }
     }
 
@@ -587,10 +554,14 @@ fn list_countries(status: &Status) {
 
 fn main() {
     let cli = Cli::parse();
-    tokio::runtime::Builder::new_multi_thread()
+    let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(cli.run.threads.max(1))
         .build()
         .unwrap()
         .block_on(run(&cli));
+
+    if let Err(err) = result {
+        eprintln!("error: {err}");
+    }
 }

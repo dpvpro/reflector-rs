@@ -15,10 +15,11 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use xdg::BaseDirectories;
+
 const URL: &str = "https://archlinux.org/mirrors/status/json/";
-const DEFAULT_CONNECTION_TIMEOUT: u16 = 5;
+const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 const DEFAULT_DOWNLOAD_TIMEOUT: u64 = 5;
-const DEFAULT_CACHE_TIMEOUT: u16 = 300;
+const DEFAULT_CACHE_TIMEOUT: u64 = 300;
 
 #[derive(Debug, ValueEnum, Clone, Copy)]
 #[allow(
@@ -78,7 +79,7 @@ struct Cli {
 struct RunOptions {
     /// The number of seconds to wait before a connection times out.
     #[arg(long, default_value_t = DEFAULT_CONNECTION_TIMEOUT, value_name = "n")]
-    connection_timeout: u16,
+    connection_timeout: u64,
 
     /// The number of seconds to wait before a download times out.
     #[arg(long, default_value_t = DEFAULT_DOWNLOAD_TIMEOUT, value_name = "n")]
@@ -87,7 +88,7 @@ struct RunOptions {
     /// The cache timeout in seconds for the data retrieved from the Arch Linux Mirror
     /// Status API.
     #[arg(long, default_value_t = DEFAULT_CACHE_TIMEOUT, value_name = "n")]
-    cache_timeout: u16,
+    cache_timeout: u64,
 
     /// Save the mirrorlist to the given file path.
     #[arg(long, value_name = "filepath")]
@@ -212,9 +213,8 @@ fn get_cache_file(name: Option<&str>) -> PathBuf {
 /// re-used within the cache timeout period. Returns the object and the local cache's
 /// modification time.
 async fn get_mirror_status(
-    // TODO: Allow using this parameter
-    _connection_timeout: u8,
-    cache_timeout: u8,
+    http_client: &reqwest::Client,
+    run_options: &RunOptions,
     url: &str,
     cache_file_path: &Path,
 ) -> Result<Status> {
@@ -225,10 +225,10 @@ async fn get_mirror_status(
     let is_invalid = mtime.is_none_or(|time| {
         let now = SystemTime::now();
         let elapsed = now.duration_since(time).expect("Time went backwards");
-        elapsed.as_secs() > u64::from(cache_timeout)
+        elapsed.as_secs() > u64::from(run_options.cache_timeout)
     });
     let loaded = if is_invalid {
-        let loaded = reqwest::get(url).await?.json().await?;
+        let loaded = http_client.get(url).send().await?.json().await?;
         let to_write = serde_json::to_string_pretty(&loaded)?;
         fs::write(cache_file_path, to_write)?;
         loaded
@@ -271,15 +271,21 @@ struct Metadata<'a> {
 }
 
 async fn run(options: &Cli) {
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(options.run.download_timeout))
+        .connect_timeout(Duration::from_secs(options.run.connection_timeout))
+        .build()
+        .unwrap();
     let cache_file = get_cache_file(None);
     let when = Timestamp::now();
-    let mut status = match get_mirror_status(10, 10, &options.url, &cache_file).await {
-        Ok(status) => status,
-        Err(err) => {
-            eprintln!("error: {err}");
-            return;
-        }
-    };
+    let mut status =
+        match get_mirror_status(&http_client, &options.run, &options.url, &cache_file).await {
+            Ok(status) => status,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return;
+            }
+        };
 
     if options.list_countries {
         list_countries(&status);
@@ -287,7 +293,7 @@ async fn run(options: &Cli) {
     }
 
     filter_status(&options.run.filters, &mut status);
-    sort_status(&options.run, &mut status).await;
+    sort_status(&options.run, &http_client, &mut status).await;
 
     let metadata = Metadata {
         when,
@@ -330,11 +336,11 @@ fn format_output<'a>(
     Ok(())
 }
 
-async fn sort_status(run_options: &RunOptions, status: &mut Status) {
+async fn sort_status(run_options: &RunOptions, http_client: &reqwest::Client, status: &mut Status) {
     match run_options.sort {
         Some(SortTypes::Age) => status.urls.sort_by_key(|mir| mir.last_sync.clone()),
         Some(SortTypes::Rate) => {
-            let rates = rate_status(run_options, status).await;
+            let rates = rate_status(run_options, http_client, status).await;
             status
                 .urls
                 .sort_by(|a, b| match (rates.get(&a.url), rates.get(&b.url)) {
@@ -359,7 +365,11 @@ async fn sort_status(run_options: &RunOptions, status: &mut Status) {
     }
 }
 
-async fn rate_status(run_options: &RunOptions, status: &Status) -> HashMap<Url, f64> {
+async fn rate_status(
+    run_options: &RunOptions,
+    http_client: &reqwest::Client,
+    status: &Status,
+) -> HashMap<Url, f64> {
     const DB_FILENAME: &str = "extra.db";
     const DB_SUBPATH: &str = "extra/os/x86_64/extra.db";
 
@@ -367,17 +377,13 @@ async fn rate_status(run_options: &RunOptions, status: &Status) -> HashMap<Url, 
     let mut rates = HashMap::with_capacity(status.urls.len());
     let semaphore = Arc::new(Semaphore::new(run_options.threads.max(1)));
     let connection_timeout = run_options.connection_timeout;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(run_options.download_timeout))
-        .build()
-        .unwrap();
 
     for mirror in &status.urls {
         let url = mirror.url.clone();
         let semaphore = semaphore.clone();
         match mirror.protocol {
             Protocol::Http | Protocol::Https => {
-                let task_client = client.clone();
+                let task_client = http_client.clone();
                 task_set.spawn(async move {
                     let Ok(_guard) = semaphore.acquire().await else {
                         return (url, f64::NEG_INFINITY);

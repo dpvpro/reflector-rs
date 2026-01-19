@@ -4,8 +4,33 @@ reflector-rs is a Rust implementation of the [Reflector][reflector]
 script for retrieving up-to-date Arch Linux mirror data from the [Mirror
 Status][mirror-status] web interface.
 
+This project aims to provide as close to a 1:1 implementation with the original
+`reflector` script while minimizing the number of dependencies.
+
 [reflector]: https://xyne.dev/projects/reflector/
 [mirror-status]: https://www.archlinux.org/mirrors/status/
+
+## Installation
+Use your preferred AUR helper to directly install the package:
+
+```bash
+# With yay
+yay -S reflector-rs
+
+# With paru
+paru -S reflector-rs
+```
+
+Alternatively, the binary can be installed via cargo.
+
+```rust
+cargo install arch-reflector
+```
+
+>[!WARNING]
+>This will only install the binary and put it on your local user's PATH, this
+>not install it system wide and does not come with the packaged man pages or
+>systemd units.
 
 ## Usage
 ```
@@ -118,6 +143,50 @@ The following filters are inclusive, i.e. the returned list will only contain mi
       --ipv6
           Only return mirrors that support IPv6
 ```
+
+### Examples
+Print the latest mirrorlist to STDOUT:
+
+```bash
+reflector
+```
+
+Sort the five most recently synchronized mirrors by download speed and overwrite
+the local mirrorlist:
+
+```bash
+reflector --latest 5 --sort rate --save /etc/pacman.d/mirrorlist
+```
+
+Select the 200 most recently synchronized HTTP or HTTPS mirrors, sort them by
+download speed, and overwrite the file /etc/pacman.d/mirrorlist:
+
+```bash
+reflector --latest 200 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
+```
+
+Select the HTTPS mirrors synchronized within the last 12 hours and located in
+either France or Germany, sort them by download speed, and overwrite the file
+/etc/pacman.d/mirrorlist with the results:
+
+```bash
+reflector --country France,Germany --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+```
+
+## systemd Integration
+Reflector includes systemd service and timer units that can be used to
+automatically update Pacman’s mirrorlist. To use the timer, edit the
+configuration file at **/etc/xdg/reflector/reflector.conf** and then enable the
+timer with
+
+```
+systemctl enable reflector.timer
+systemctl start reflector.timer
+```
+
+Check that status with `systemctl list-timers`. To update the mirrorlist
+immediately instead of waiting for the scheduled operation, run `systemctl start
+reflector.service`.
 
 ## Minimum Supported Rust Version
 All crates under this repository use a MSRV matched with the stable Debian

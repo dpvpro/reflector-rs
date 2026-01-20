@@ -1,13 +1,13 @@
 [package]
 name = "arch-reflector"
-version = "0.1.5"
+version = "1.0.0"
 description = "Retrieve and filter a list of the latest Arch Linux mirrors."
 edition = "2024"
 rust-version = "1.85"
 authors = ["IgnisDa <ignisda2001@gmail.com>", "James Liu <contact@no-bull.sh>"]
 repository = "https://github.com/james7132/reflector-rs"
 license = "GPL-2.0-or-later"
-readme = "README.md"
+readme = "../../README.md"
 
 [[bin]]
 name = "reflector"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-arch-mirrors-rs = { path = "../arch-mirrors-rs", version = "0.1.1" }
+arch-mirrors-rs = { path = "../arch-mirrors-rs", version = "1.0" }
 jiff = "0.2"
 futures-util = "0.3"
 clap = { version = "4.5", features = ["derive"] }

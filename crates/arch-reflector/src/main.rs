@@ -8,6 +8,7 @@ use regex::Regex;
 use reqwest::Url;
 use std::cmp::{Ordering, Reverse};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -658,8 +659,26 @@ fn list_countries(status: &Status) {
     }
 }
 
+fn convert_arg_line_to_args(content: &str, _prefix: char) -> Vec<argfile::Argument> {
+    content
+        .split('\n')
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty() && !arg.starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .map(OsString::from)
+        .map(argfile::Argument::PassThrough)
+        .collect()
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let cli = match argfile::expand_args(convert_arg_line_to_args, argfile::PREFIX) {
+        Ok(args) => Cli::parse_from(args),
+        Err(err) => {
+            eprintln!("error: {err}");
+            return;
+        }
+    };
+
     let maybe_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(cli.run.threads.max(1))

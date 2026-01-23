@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
+argfile = "0.2"
 arch-mirrors-rs = { path = "../arch-mirrors-rs", version = "1.0" }
 jiff = "0.2"
 futures-util = "0.3"
